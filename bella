@@ -1,0 +1,80 @@
+import requests
+import numpy
+
+llm_url = "http://localhost:11434/api/chat"
+embed_url = "http://localhost:11434/api/embeddings"
+
+llm_model = "llama3"
+embed_model = "nomic-embed-text"
+
+memory_store = []
+
+
+def get_embedding (text):
+    payload = {"model": embed_model, "input": text}
+    req = requests.post (embed_url, json = payload)
+    req.raise_for_status ()
+
+    return req.json () ["embedding"]
+
+
+def similarity (vector1, vector2):
+    vector1_convertion = numpy.array (vector1)
+    vector2_convertion = numpy.array (vector2)
+    if numpy.linalg.norm (vector1_convertion) == 0 or numpy.linalg.norm (vector2_convertion) == 0:
+        return 0.0 
+    
+    return numpy.dot(vector1_convertion, vector2_convertion) / (numpy.linalg.norm (vector1_convertion) * numpy.linalg.norm (vector2_convertion))
+
+
+def recall_context(query, most_similar=3):
+    if not memory_store:
+        return []
+    query_emb = get_embedding(query)
+    scored = []
+    for m in memory_store:
+        sim = similarity(query_emb, m["embedding"])
+        scored.append((sim, m))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [m for _, m in scored[:most_similar]]
+
+
+def llm (user_message):
+    recalled = recall_context(user_message)
+    system_prompt = "you are a robo cat assistant who is really goofy and has a power to remember past conversations"
+    full_message = [{"role": "system", "content": system_prompt}]
+    for past in recalled:
+        full_message.append({"role": past["role"], "content": past["message"]})
+    full_message.append({"role": "user", "content": user_message})
+
+    payload = {
+    "model" : llm_model,
+    "messages" : full_message,
+    "stream": False
+    }
+
+    r = requests.post (llm_url, json = payload)
+    r.raise_for_status ()
+    repsonse_data = r.json ()
+    return repsonse_data ["message"]["content"]
+
+
+def store_message (role, message):
+    emb = get_embedding (message)
+    memory_store.append ({"role" : role, "message" : message, "embedding" : emb})
+
+
+def start ():
+    print ("Ask Bella for her wisdom")
+    try:
+        while True:
+            user_message = input ("user> ")
+            store_message ("user", user_message)
+            result = llm (user_message)
+            store_message ("assistant", result)
+            print ("Bella>", result)
+           
+    except:
+        print ("error")
+
+start ()
